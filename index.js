@@ -175,6 +175,16 @@ api.use((req, res, next) => {
   next();
 });
 
+// Handler explícito para preflight OPTIONS en todas las rutas de API
+api.options('*', (req, res) => {
+  console.log('OPTIONS dentro de /api router:', req.method, req.originalUrl, 'Origin:', req.headers.origin);
+  res.header('Access-Control-Allow-Origin', req.headers.origin);
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,PATCH,OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.sendStatus(200);
+});
+
 // Rutas para manejar roles y autenticación
 api.post('/register', (req, res) => {
   const { name, email, password, role } = req.body;
