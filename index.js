@@ -11,10 +11,7 @@ const port = process.env.PORT || 3001;
 
 // Middleware
 app.use(cors({
-  origin: [
-    'https://fronend-restaurant-production.up.railway.app',
-    'http://localhost:5173', // para desarrollo local con Vite
-  ],
+  origin: '*', // Permite cualquier origen para pruebas, cambiar a dominio específico en producción
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
@@ -22,10 +19,7 @@ app.use(cors({
 
 // Responder a preflight OPTIONS para todas las rutas
 app.options('*', cors({
-  origin: [
-    'https://fronend-restaurant-production.up.railway.app',
-    'http://localhost:5173', // para desarrollo local con Vite
-  ],
+  origin: '*',
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
