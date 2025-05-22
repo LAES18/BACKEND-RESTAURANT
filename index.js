@@ -7,7 +7,7 @@ const cors = require('cors');
 const path = require('path');
 
 const app = express();
-const port = process.env.PORT || 8080;
+const port = process.env.PORT || 3001;
 
 // Middleware
 app.use(cors());
@@ -176,10 +176,10 @@ api.post('/register', (req, res) => {
   db.query(query, [name, email, password, role], (err) => {
     if (err) {
       console.error('Error al registrar usuario:', err);
+      // Log detallado para depuración
       if (err.code === 'ER_DUP_ENTRY') {
         return res.status(400).json({ error: 'El correo electrónico ya está registrado', details: err.sqlMessage });
       }
-      // Mostrar el error SQL exacto para depuración
       return res.status(500).json({ error: 'Error al registrar usuario', details: err.sqlMessage || err.message || err });
     }
     res.status(200).send('Usuario registrado exitosamente');
