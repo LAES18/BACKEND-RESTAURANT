@@ -455,22 +455,6 @@ app.use('/api/*', (req, res) => {
   res.status(404).json({ error: 'API route not found' });
 });
 
-// Servir archivos estáticos del frontend (Vite build)
-app.use(express.static(path.join(__dirname, '../dist')));
-
-// Para cualquier método que no sea GET en rutas que no sean /api, responde 405 explícito
-app.all(/^\/(?!api).*/, (req, res, next) => {
-  if (req.method !== 'GET') {
-    return res.status(405).send('Method Not Allowed');
-  }
-  next();
-});
-
-// Para cualquier ruta GET que no sea API, devolver index.html (SPA)
-app.get(/^\/(?!api).*/, (req, res) => {
-  res.sendFile(path.join(__dirname, '../dist/index.html'));
-});
-
 app.listen(port, () => {
   console.log(`Servidor corriendo en http://localhost:${port}`);
 });
