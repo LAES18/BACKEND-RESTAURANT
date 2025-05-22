@@ -9,12 +9,21 @@ const path = require('path');
 const app = express();
 const port = process.env.PORT || 3001;
 
+// Lista blanca de orígenes permitidos
+const allowedOrigins = [
+  'https://fronend-restaurant-production.up.railway.app',
+  'http://localhost:5173',
+];
+
 // Middleware CORS
 app.use(cors({
-  origin: [
-    'https://fronend-restaurant-production.up.railway.app',
-    'http://localhost:5173',
-  ],
+  origin: function(origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
@@ -24,12 +33,16 @@ app.use(cors({
 
 // Handler explícito para preflight OPTIONS en /api/* (debe ir antes de rutas)
 app.options('/api/*', (req, res) => {
-  console.log('OPTIONS /api/* preflight:', req.method, req.originalUrl, 'Origin:', req.headers.origin);
-  res.header('Access-Control-Allow-Origin', req.headers.origin);
-  res.header('Access-Control-Allow-Credentials', 'true');
-  res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,PATCH,OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  res.sendStatus(200);
+  const origin = req.headers.origin;
+  if (!origin || allowedOrigins.includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,PATCH,OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.sendStatus(200);
+  } else {
+    res.sendStatus(403);
+  }
 });
 
 // Si quieres, puedes dejar un handler para la raíz
@@ -177,12 +190,16 @@ api.use((req, res, next) => {
 
 // Handler explícito para preflight OPTIONS en todas las rutas de API
 api.options('*', (req, res) => {
-  console.log('OPTIONS dentro de /api router:', req.method, req.originalUrl, 'Origin:', req.headers.origin);
-  res.header('Access-Control-Allow-Origin', req.headers.origin);
-  res.header('Access-Control-Allow-Credentials', 'true');
-  res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,PATCH,OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  res.sendStatus(200);
+  const origin = req.headers.origin;
+  if (!origin || allowedOrigins.includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,PATCH,OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.sendStatus(200);
+  } else {
+    res.sendStatus(403);
+  }
 });
 
 // Rutas para manejar roles y autenticación
