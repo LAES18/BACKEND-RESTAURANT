@@ -16,6 +16,19 @@ app.use(cors({
     'http://localhost:5173', // para desarrollo local con Vite
   ],
   credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
+
+// Responder a preflight OPTIONS para todas las rutas
+app.options('*', cors({
+  origin: [
+    'https://fronend-restaurant-production.up.railway.app',
+    'http://localhost:5173', // para desarrollo local con Vite
+  ],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 app.use(bodyParser.json());
 
@@ -476,6 +489,11 @@ app.use('/api/*', (req, res) => {
 // app.get(/^\/(?!api).*/, (req, res) => {
 //   res.sendFile(path.join(__dirname, '../dist/index.html'));
 // });
+
+// Ruta raíz para mostrar mensaje simple
+app.get('/', (req, res) => {
+  res.send('API REST corriendo');
+});
 
 app.listen(port, () => {
   console.log(`Servidor corriendo en http://localhost:${port}`);
