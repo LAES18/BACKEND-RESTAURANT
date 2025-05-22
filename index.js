@@ -9,7 +9,7 @@ const path = require('path');
 const app = express();
 const port = process.env.PORT || 3001;
 
-// Middleware
+// Middleware CORS
 app.use(cors({
   origin: [
     'https://fronend-restaurant-production.up.railway.app',
@@ -22,14 +22,25 @@ app.use(cors({
   optionsSuccessStatus: 200
 }));
 
-// Responder a preflight OPTIONS para todas las rutas
-app.options('*', (req, res) => {
+// Handler explícito para preflight OPTIONS en /api/* (debe ir antes de rutas)
+app.options('/api/*', (req, res) => {
+  console.log('OPTIONS /api/* preflight:', req.method, req.originalUrl, 'Origin:', req.headers.origin);
   res.header('Access-Control-Allow-Origin', req.headers.origin);
   res.header('Access-Control-Allow-Credentials', 'true');
   res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,PATCH,OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   res.sendStatus(200);
 });
+
+// Si quieres, puedes dejar un handler para la raíz
+app.options('/', (req, res) => {
+  res.header('Access-Control-Allow-Origin', req.headers.origin);
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,PATCH,OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.sendStatus(200);
+});
+
 app.use(bodyParser.json());
 
 // Conexión a la base de datos usando variables de entorno para compatibilidad Railway/local
@@ -497,14 +508,4 @@ app.get('/', (req, res) => {
 
 app.listen(port, () => {
   console.log(`Servidor corriendo en http://localhost:${port}`);
-});
-
-// Handler explícito para preflight OPTIONS en /api/*
-app.options('/api/*', (req, res) => {
-  console.log('OPTIONS /api/* preflight:', req.method, req.originalUrl, 'Origin:', req.headers.origin);
-  res.header('Access-Control-Allow-Origin', req.headers.origin);
-  res.header('Access-Control-Allow-Credentials', 'true');
-  res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,PATCH,OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  res.sendStatus(200);
 });
