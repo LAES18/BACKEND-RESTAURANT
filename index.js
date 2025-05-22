@@ -9,13 +9,11 @@ const path = require('path');
 const app = express();
 const port = process.env.PORT || 3001;
 
-// Lista blanca de orígenes permitidos
+// Railway-only CORS config
 const allowedOrigins = [
-  'https://fronend-restaurant-production.up.railway.app',
-  'http://localhost:5173',
+  'https://fronend-restaurant-production.up.railway.app'
 ];
 
-// Middleware CORS
 app.use(cors({
   origin: function(origin, callback) {
     if (!origin || allowedOrigins.includes(origin)) {
@@ -31,7 +29,7 @@ app.use(cors({
   optionsSuccessStatus: 200
 }));
 
-// Handler explícito para preflight OPTIONS en /api/* (debe ir antes de rutas)
+// Handler explícito para preflight OPTIONS en /api/* (Railway only)
 app.options('/api/*', (req, res) => {
   const origin = req.headers.origin;
   if (!origin || allowedOrigins.includes(origin)) {
@@ -45,24 +43,29 @@ app.options('/api/*', (req, res) => {
   }
 });
 
-// Si quieres, puedes dejar un handler para la raíz
+// Handler explícito para preflight OPTIONS en la raíz (Railway only)
 app.options('/', (req, res) => {
-  res.header('Access-Control-Allow-Origin', req.headers.origin);
-  res.header('Access-Control-Allow-Credentials', 'true');
-  res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,PATCH,OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  res.sendStatus(200);
+  const origin = req.headers.origin;
+  if (!origin || allowedOrigins.includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,PATCH,OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.sendStatus(200);
+  } else {
+    res.sendStatus(403);
+  }
 });
 
 app.use(bodyParser.json());
 
-// Conexión a la base de datos usando variables de entorno para compatibilidad Railway/local
+// Asegura que la conexión a la base de datos use solo variables de entorno Railway
 const db = mysql.createConnection({
-  host: process.env.MYSQLHOST || 'tramway.proxy.rlwy.net',
-  user: process.env.MYSQLUSER || 'root',
-  password: process.env.MYSQLPASSWORD || ':biNuurNEajxKdCHkUdFbiXgJyLoEEjDm',
-  database: process.env.MYSQLDATABASE || 'railway',
-  port: process.env.MYSQLPORT ? parseInt(process.env.MYSQLPORT) : 53929
+  host: process.env.MYSQLHOST,
+  user: process.env.MYSQLUSER,
+  password: process.env.MYSQLPASSWORD,
+  database: process.env.MYSQLDATABASE,
+  port: process.env.MYSQLPORT ? parseInt(process.env.MYSQLPORT) : 3306
 });
 
 db.connect((err) => {
@@ -188,7 +191,7 @@ api.use((req, res, next) => {
   next();
 });
 
-// Handler explícito para preflight OPTIONS en todas las rutas de API
+// Handler explícito para preflight OPTIONS en todas las rutas de API (Railway only)
 api.options('*', (req, res) => {
   const origin = req.headers.origin;
   if (!origin || allowedOrigins.includes(origin)) {
@@ -512,27 +515,11 @@ app.use('/api/*', (req, res) => {
   res.status(404).json({ error: 'API route not found' });
 });
 
-// Servir archivos estáticos del frontend (Vite build)
-// app.use(express.static(path.join(__dirname, '../dist')));
-
-// Para cualquier método que no sea GET en rutas que no sean /api, responde 405 explícito
-// app.all(/^\/(?!api).*/, (req, res, next) => {
-//   if (req.method !== 'GET') {
-//     return res.status(405).send('Method Not Allowed');
-//   }
-//   next();
-// });
-
-// Para cualquier ruta GET que no sea API, devolver index.html (SPA)
-// app.get(/^\/(?!api).*/, (req, res) => {
-//   res.sendFile(path.join(__dirname, '../dist/index.html'));
-// });
-
-// Ruta raíz para mostrar mensaje simple
+// Asegura que la ruta raíz solo muestre texto plano
 app.get('/', (req, res) => {
   res.type('text/plain').send('API REST corriendo');
 });
 
 app.listen(port, () => {
-  console.log(`Servidor corriendo en http://localhost:${port}`);
+  console.log(`Servidor corriendo en Railway, puerto ${port}`);
 });
