@@ -11,19 +11,25 @@ const port = process.env.PORT || 3001;
 
 // Middleware
 app.use(cors({
-  origin: '*', // Permite cualquier origen para pruebas, cambiar a dominio específico en producción
+  origin: [
+    'https://fronend-restaurant-production.up.railway.app',
+    'http://localhost:5173',
+  ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
+  preflightContinue: false,
+  optionsSuccessStatus: 200
 }));
 
 // Responder a preflight OPTIONS para todas las rutas
-app.options('*', cors({
-  origin: '*',
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-}));
+app.options('*', (req, res) => {
+  res.header('Access-Control-Allow-Origin', req.headers.origin);
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,PATCH,OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.sendStatus(200);
+});
 app.use(bodyParser.json());
 
 // Conexión a la base de datos usando variables de entorno para compatibilidad Railway/local
