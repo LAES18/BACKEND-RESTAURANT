@@ -506,6 +506,13 @@ api.put('/users/:id', (req, res) => {
   });
 });
 
+// Ruta para cerrar sesión (logout)
+api.post('/logout', (req, res) => {
+  // Si usas cookies/sesiones, aquí deberías destruir la sesión.
+  // Como este backend es stateless (sin sesiones), solo responde OK.
+  res.status(200).json({ message: 'Sesión cerrada correctamente' });
+});
+
 // Usar el prefijo /api para todas las rutas de API
 app.use('/api', api);
 
