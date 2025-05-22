@@ -492,7 +492,7 @@ app.use('/api/*', (req, res) => {
 
 // Ruta raíz para mostrar mensaje simple
 app.get('/', (req, res) => {
-  res.send('API REST corriendo');
+  res.type('text/plain').send('API REST corriendo');
 });
 
 app.listen(port, () => {
