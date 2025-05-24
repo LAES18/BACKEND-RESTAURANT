@@ -59,21 +59,27 @@ app.options('/', (req, res) => {
 
 app.use(bodyParser.json());
 
-// Asegura que la conexión a la base de datos use solo variables de entorno Railway
-const db = mysql.createConnection({
+// Usa un pool de conexiones para MySQL (recomendado en Railway)
+const db = mysql.createPool({
   host: process.env.MYSQLHOST,
   user: process.env.MYSQLUSER,
   password: process.env.MYSQLPASSWORD,
   database: process.env.MYSQLDATABASE,
-  port: process.env.MYSQLPORT ? parseInt(process.env.MYSQLPORT) : 3306
+  port: process.env.MYSQLPORT ? parseInt(process.env.MYSQLPORT) : 3306,
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0
 });
 
-db.connect((err) => {
+// Prueba la conexión al pool
+// (esto solo para loguear si conecta bien al iniciar)
+db.getConnection((err, connection) => {
   if (err) {
-    console.error('Error al conectar con MySQL:', err);
-    return;
+    console.error('Error al conectar con MySQL (pool):', err);
+  } else {
+    console.log('Conexión exitosa a MySQL Railway (pool)');
+    connection.release();
   }
-  console.log('Conexión exitosa a MySQL Railway');
 });
 
 // Inicializar base de datos
