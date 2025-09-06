@@ -477,17 +477,7 @@ api.post('/payments', (req, res) => {
       console.error('Error al procesar pagos:', err); // Debugging log
       res.status(500).send('Error al procesar pagos');
     });
-});
-
-// Actualizar la inicialización de la base de datos para incluir 'pagado' en el tipo ENUM de 'status'
-const alterStatusEnum = `ALTER TABLE orders MODIFY COLUMN status ENUM('pendiente', 'en_proceso', 'servido', 'pagado') DEFAULT 'pendiente';`;
-db.query(alterStatusEnum, (err) => {
-  if (err) {
-    console.error("Error al actualizar el tipo ENUM de 'status' en la tabla 'orders':", err);
-  } else {
-    console.log("Tipo ENUM de 'status' en la tabla 'orders' actualizado correctamente.");
-  }
-});
+  });
 
 // Ruta para actualizar detalles de usuario por ID
 api.put('/users/:id', (req, res) => {
