@@ -321,14 +321,14 @@ api.get('/orders', (req, res) => {
           typesArr = r.types.split(',');
           pricesArr = r.prices.split(',');
         }
-        return {
-          ...r,
-          dishes: dishesArr.map((name, i) => ({
-            name,
-            type: typesArr[i],
-            price: parseFloat(pricesArr[i])
-          }))
-        };
+          return {
+            ...r,
+            dishes: dishesArr.map((name, i) => ({
+              name,
+              type: typesArr[i],
+              price: Number.isFinite(parseFloat(pricesArr[i])) ? parseFloat(pricesArr[i]) : 0
+            }))
+          };
       });
       res.status(200).json(formatted);
     }
