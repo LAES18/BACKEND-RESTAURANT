@@ -101,7 +101,7 @@ const initializeDatabase = () => {
     `CREATE TABLE IF NOT EXISTS orders (
       id INT AUTO_INCREMENT PRIMARY KEY,
       user_id INT NOT NULL,
-      status ENUM('pendiente', 'en_proceso', 'servido') DEFAULT 'pendiente',
+      status ENUM('pendiente', 'en_proceso', 'servido', 'pagado') DEFAULT 'pendiente',
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       mesa VARCHAR(10),
       FOREIGN KEY (user_id) REFERENCES users(id)
@@ -484,13 +484,22 @@ api.put('/users/:id', (req, res) => {
   const { name, email, password, role } = req.body;
   const userId = req.params.id;
 
-  // Validar que todos los campos estén presentes
-  if (!name || !email || !password || !role) {
-    return res.status(400).send('Todos los campos son obligatorios');
+  // Validar que los campos obligatorios estén presentes (excepto password)
+  if (!name || !email || !role) {
+    return res.status(400).send('Nombre, email y rol son obligatorios');
   }
 
-  const query = 'UPDATE users SET name = ?, email = ?, password = ?, role = ? WHERE id = ?';
-  db.query(query, [name, email, password, role, userId], (err, result) => {
+  // Si no se envía contraseña o es 'unchanged', no la actualizamos
+  let query, params;
+  if (password && password !== 'unchanged' && password.trim() !== '') {
+    query = 'UPDATE users SET name = ?, email = ?, password = ?, role = ? WHERE id = ?';
+    params = [name, email, password, role, userId];
+  } else {
+    query = 'UPDATE users SET name = ?, email = ?, role = ? WHERE id = ?';
+    params = [name, email, role, userId];
+  }
+
+  db.query(query, params, (err, result) => {
     if (err) {
       console.error('Error al actualizar usuario:', err);
       return res.status(500).send('Error al actualizar usuario');
