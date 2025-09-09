@@ -11,7 +11,8 @@ const port = process.env.PORT || 3001;
 
 // Railway-only CORS config
 const allowedOrigins = [
-  'https://frontend-restaurant-production.up.railway.app',
+  'https://frontend-restaurant-production.up.railway.app', // correct domain
+  'https://frontend-restaurant-production.up.railway.app',  // typo domain
   'http://localhost:5173'
 ];
 
