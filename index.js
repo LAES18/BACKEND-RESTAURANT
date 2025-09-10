@@ -1,3 +1,46 @@
+// Función para generar factura PDF (puedes copiarla a tu frontend si la necesitas ahí)
+// Requiere jsPDF instalado en el frontend
+// import jsPDF from 'jspdf';
+export function generateInvoicePDF(order) {
+  const doc = new jsPDF();
+  let y = 20;
+
+  doc.setFontSize(18);
+  doc.text('Factura Restaurante', 105, y, { align: 'center' });
+  y += 10;
+
+  doc.setFontSize(12);
+  doc.text(`Orden #${order.id}`, 20, y);
+  doc.text(`Mesa: ${order.mesa || 'N/A'}`, 120, y);
+  y += 10;
+
+  doc.text(`Fecha: ${new Date(order.created_at).toLocaleString()}`, 20, y);
+  y += 10;
+
+  doc.text('Platillos:', 20, y);
+  y += 8;
+
+  order.dishes.forEach((dish, i) => {
+    doc.text(`${dish.name} (${dish.type})`, 25, y);
+    doc.text(`$${Number(dish.price).toFixed(2)}`, 150, y);
+    y += 7;
+  });
+
+  y += 5;
+  doc.line(20, y, 190, y);
+  y += 10;
+
+  const total = order.dishes.reduce((sum, d) => sum + Number(d.price), 0);
+  doc.setFontSize(14);
+  doc.text('Total:', 120, y);
+  doc.text(`$${total.toFixed(2)}`, 150, y);
+
+  y += 20;
+  doc.setFontSize(10);
+  doc.text('¡Gracias por su compra!', 105, y, { align: 'center' });
+
+  doc.save(`factura-orden-${order.id}.pdf`);
+}
 require('dotenv').config(); // Carga variables de entorno desde .env
 
 const express = require('express');
