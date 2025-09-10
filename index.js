@@ -300,15 +300,27 @@ api.post('/dishes', (req, res) => {
 
 // Rutas para manejar órdenes
 api.get('/orders', (req, res) => {
-  const status = req.query.status;
+  const { status, date, month } = req.query;
   let query = `SELECT o.*, GROUP_CONCAT(d.name ORDER BY oi.id) as dishes, GROUP_CONCAT(d.type ORDER BY oi.id) as types, GROUP_CONCAT(d.price ORDER BY oi.id) as prices FROM orders o
     JOIN order_items oi ON o.id = oi.order_id
     JOIN dishes d ON oi.dish_id = d.id`;
   const params = [];
 
+  let where = [];
   if (status) {
-    query += ` WHERE o.status = ?`;
+    where.push('o.status = ?');
     params.push(status);
+  }
+  if (date) {
+    where.push('DATE(o.created_at) = DATE(?)');
+    params.push(date);
+  }
+  if (month) {
+    where.push('DATE_FORMAT(o.created_at, "%Y-%m") = DATE_FORMAT(?, "%Y-%m")');
+    params.push(month);
+  }
+  if (where.length > 0) {
+    query += ' WHERE ' + where.join(' AND ');
   }
 
   query += ' GROUP BY o.id ORDER BY o.created_at ASC, o.mesa ASC';
@@ -325,14 +337,14 @@ api.get('/orders', (req, res) => {
           typesArr = r.types.split(',');
           pricesArr = r.prices.split(',');
         }
-          return {
-            ...r,
-            dishes: dishesArr.map((name, i) => ({
-              name,
-              type: typesArr[i],
-              price: Number.isFinite(parseFloat(pricesArr[i])) ? parseFloat(pricesArr[i]) : 0
-            }))
-          };
+        return {
+          ...r,
+          dishes: dishesArr.map((name, i) => ({
+            name,
+            type: typesArr[i],
+            price: Number.isFinite(parseFloat(pricesArr[i])) ? parseFloat(pricesArr[i]) : 0
+          }))
+        };
       });
       res.status(200).json(formatted);
     }
@@ -368,13 +380,156 @@ api.patch('/orders/:id', (req, res) => {
 
 // Rutas para manejar cobros
 api.get('/payments', (req, res) => {
-  const query = 'SELECT * FROM payments';
-  db.query(query, (err, results) => {
+  const { date, month } = req.query;
+  let query = 'SELECT * FROM payments';
+  const params = [];
+  let where = [];
+  if (date) {
+    where.push('DATE(paid_at) = DATE(?)');
+    params.push(date);
+  }
+  if (month) {
+    where.push('DATE_FORMAT(paid_at, "%Y-%m") = DATE_FORMAT(?, "%Y-%m")');
+    params.push(month);
+  }
+  if (where.length > 0) {
+    query += ' WHERE ' + where.join(' AND ');
+  }
+  db.query(query, params, (err, results) => {
     if (err) {
       res.status(500).send('Error al obtener pagos');
     } else {
       res.status(200).json(results);
     }
+  });
+});
+
+// Ruta para reportes de pagos
+api.get('/payments/report', (req, res) => {
+  const { type, date } = req.query;
+  
+  if (!type || !date) {
+    return res.status(400).json({
+      error: 'Parámetros incompletos',
+      details: 'Se requieren los parámetros type y date'
+    });
+  }
+
+  let query = `
+    SELECT p.*, o.mesa, o.created_at as order_date,
+           GROUP_CONCAT(d.name) as dishes,
+           GROUP_CONCAT(d.price) as prices
+    FROM payments p
+    JOIN orders o ON p.order_id = o.id
+    JOIN order_items oi ON o.id = oi.order_id
+    JOIN dishes d ON oi.dish_id = d.id`;
+
+  const params = [];
+
+  if (type === 'mensual') {
+    query += ' WHERE DATE_FORMAT(p.paid_at, "%Y-%m") = DATE_FORMAT(?, "%Y-%m")';
+    params.push(date);
+  } else if (type === 'diario') {
+    query += ' WHERE DATE(p.paid_at) = DATE(?)';
+    params.push(date);
+  } else {
+    return res.status(400).json({
+      error: 'Tipo de reporte inválido',
+      details: 'El tipo debe ser "mensual" o "diario"'
+    });
+  }
+
+  query += ' GROUP BY p.id ORDER BY p.paid_at DESC';
+
+  db.query(query, params, (err, results) => {
+    if (err) {
+      console.error('Error al generar reporte:', err);
+      return res.status(500).json({
+        error: 'Error al generar reporte',
+        details: err.message
+      });
+    }
+
+    // Procesar los resultados para incluir los platillos como array
+    const processed = results.map(r => {
+      const dishesArr = r.dishes ? r.dishes.split(',') : [];
+      const pricesArr = r.prices ? r.prices.split(',').map(p => parseFloat(p)) : [];
+      
+      return {
+        ...r,
+        dishes: dishesArr.map((name, i) => ({
+          name,
+          price: pricesArr[i] || 0
+        }))
+      };
+    });
+
+    // Calcular totales
+    const summary = {
+      total: processed.reduce((sum, p) => sum + p.total, 0),
+      count: processed.length,
+      byMethod: processed.reduce((acc, p) => {
+        acc[p.method] = (acc[p.method] || 0) + p.total;
+        return acc;
+      }, {})
+    };
+
+    res.status(200).json({
+      period: type,
+      date: date,
+      summary,
+      details: processed
+    });
+  });
+});
+
+// Ruta para obtener una orden específica
+api.get('/orders/:id', (req, res) => {
+  const orderId = req.params.id;
+  const query = `
+    SELECT o.*, GROUP_CONCAT(d.name ORDER BY oi.id) as dishes, 
+           GROUP_CONCAT(d.type ORDER BY oi.id) as types, 
+           GROUP_CONCAT(d.price ORDER BY oi.id) as prices
+    FROM orders o
+    JOIN order_items oi ON o.id = oi.order_id
+    JOIN dishes d ON oi.dish_id = d.id
+    WHERE o.id = ?
+    GROUP BY o.id`;
+
+  db.query(query, [orderId], (err, results) => {
+    if (err) {
+      console.error('Error al obtener orden:', err);
+      return res.status(500).json({ 
+        error: 'Error al obtener la orden',
+        details: err.message 
+      });
+    }
+    if (results.length === 0) {
+      return res.status(404).json({ 
+        error: 'Orden no encontrada',
+        details: `No se encontró la orden con ID ${orderId}`
+      });
+    }
+
+    // Procesa los resultados igual que en el endpoint general
+    const result = results[0];
+    let dishesArr = [], typesArr = [], pricesArr = [];
+    if (result.dishes && result.types && result.prices) {
+      dishesArr = result.dishes.split(',');
+      typesArr = result.types.split(',');
+      pricesArr = result.prices.split(',');
+    }
+    
+    const formatted = {
+      ...result,
+      dishes: dishesArr.map((name, i) => ({
+        name,
+        type: typesArr[i],
+        price: Number.isFinite(parseFloat(pricesArr[i])) ? parseFloat(pricesArr[i]) : 0
+      }))
+    };
+    
+    res.status(200).json(formatted);
   });
 });
 
