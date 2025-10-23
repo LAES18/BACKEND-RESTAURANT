@@ -16,7 +16,8 @@ const allowedOrigins = [
   'http://frontend-restaurant-production.up.railway.app', // correct domain (http)
   'https://fronend-restaurant-production.up.railway.app',  // typo domain (https)
   'http://fronend-restaurant-production.up.railway.app',   // typo domain (http)
-  'http://localhost:5173'
+  'http://localhost:5173',
+  'http://localhost:5176'  // Added the correct port
 ];
 
 app.use(cors({
