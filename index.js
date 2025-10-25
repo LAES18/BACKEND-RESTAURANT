@@ -88,8 +88,8 @@ db.getConnection((err, connection) => {
   }
 });
 
-// Inicializar base de datos
-const initializeDatabase = () => {
+// Inicializar base de datos de forma secuencial
+const initializeDatabase = async () => {
   const queries = [
     `CREATE TABLE IF NOT EXISTS users (
       id INT AUTO_INCREMENT PRIMARY KEY,
@@ -112,6 +112,13 @@ const initializeDatabase = () => {
       mesa VARCHAR(10),
       FOREIGN KEY (user_id) REFERENCES users(id)
     );`,
+    `CREATE TABLE IF NOT EXISTS order_items (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      order_id INT NOT NULL,
+      dish_id INT NOT NULL,
+      FOREIGN KEY (order_id) REFERENCES orders(id),
+      FOREIGN KEY (dish_id) REFERENCES dishes(id)
+    );`,
     `CREATE TABLE IF NOT EXISTS payments (
       id INT AUTO_INCREMENT PRIMARY KEY,
       order_id INT NOT NULL,
@@ -122,13 +129,18 @@ const initializeDatabase = () => {
     );`,
   ];
 
-  queries.forEach((query) => {
-    db.query(query, (err) => {
-      if (err) {
-        console.error('Error al inicializar la base de datos:', err);
-      }
-    });
-  });
+  for (const query of queries) {
+    try {
+      await new Promise((resolve, reject) => {
+        db.query(query, (err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+    } catch (err) {
+      console.error('Error al inicializar la base de datos:', err);
+    }
+  }
 };
 
 initializeDatabase();
@@ -158,19 +170,7 @@ alterQueries.forEach((query) => {
   });
 });
 
-// Crear tabla intermedia para items de la orden
-const createOrderItems = `CREATE TABLE IF NOT EXISTS order_items (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  order_id INT NOT NULL,
-  dish_id INT NOT NULL,
-  FOREIGN KEY (order_id) REFERENCES orders(id),
-  FOREIGN KEY (dish_id) REFERENCES dishes(id)
-);`;
-db.query(createOrderItems, (err) => {
-  if (err) {
-    console.error('Error al crear tabla order_items:', err);
-  }
-});
+// La tabla order_items ya se crea en initializeDatabase, así que eliminamos esta duplicación
 
 // Asegura que el ENUM de 'role' en users sea correcto al iniciar el backend SOLO si es necesario
 const checkRoleEnum = `SHOW COLUMNS FROM users LIKE 'role';`;
