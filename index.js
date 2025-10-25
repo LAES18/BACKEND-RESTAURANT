@@ -10,14 +10,17 @@ const path = require('path');
 const app = express();
 const port = process.env.PORT || 3001;
 
-// Railway-only CORS config
+// CORS config - Railway + Servidor Local
 const allowedOrigins = [
   'https://frontend-restaurant-production.up.railway.app', // correct domain (https)
   'http://frontend-restaurant-production.up.railway.app', // correct domain (http)
   'https://fronend-restaurant-production.up.railway.app',  // typo domain (https)
   'http://fronend-restaurant-production.up.railway.app',   // typo domain (http)
   'http://localhost:5173',
-  'http://localhost:5176'  // Added the correct port
+  'http://localhost:5176',  // Added the correct port
+  'http://192.168.0.12',     // Servidor local IP
+  'http://192.168.0.12:3000', // Servidor local con puerto
+  'http://192.168.0.12:80'    // Nginx puerto 80
 ];
 
 app.use(cors({
@@ -254,7 +257,12 @@ api.post('/register', (req, res) => {
       }
       return res.status(500).json({ error: 'Error al registrar usuario', details: err.sqlMessage || err.message || err });
     }
-    res.status(200).send('Usuario registrado exitosamente');
+    // Retornar JSON en lugar de texto plano
+    res.status(201).json({ 
+      success: true, 
+      message: 'Usuario registrado exitosamente',
+      user: { name, email, role }
+    });
   });
 });
 

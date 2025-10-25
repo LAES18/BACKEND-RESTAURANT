@@ -1,0 +1,70 @@
+# Systemd unit file para Backend Restaurant (Node.js/Express)
+#
+# Este servicio corre el backend de la aplicación Restaurant como un proceso
+# persistente que inicia automáticamente con el sistema.
+#
+# Características:
+# - Corre como usuario www-data (sin privilegios)
+# - Limita memoria a 200MB para servidores con poca RAM
+# - Reinicia automáticamente si falla
+# - Carga variables de entorno desde .env
+#
+# Para instalar:
+#   sudo cp backend-restaurant.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now backend-restaurant
+#   sudo systemctl status backend-restaurant
+
+[Unit]
+Description=Backend Restaurant Node.js API Server (low-RAM optimized)
+Documentation=https://github.com/LAES18/BACKEND-RESTAURANT
+After=network.target mysql.service
+Wants=mysql.service
+
+[Service]
+Type=simple
+
+# Usuario sin privilegios (seguridad)
+User=www-data
+Group=www-data
+
+# Directorio de trabajo
+WorkingDirectory=/var/www/BACKEND-RESTAURANT
+
+# Variables de entorno
+Environment=NODE_ENV=production
+
+# Cargar credenciales desde .env (no commitear a git!)
+# Debe contener: MYSQLHOST, MYSQLUSER, MYSQLPASSWORD, MYSQLDATABASE, PORT, FRONTEND_URL
+EnvironmentFile=/var/www/BACKEND-RESTAURANT/.env
+
+# Comando de inicio con límite de memoria heap
+# --max-old-space-size=128 limita heap de V8 a 128MB
+# Para servidores con más RAM, aumenta este valor (ej: 256, 512)
+ExecStart=/usr/bin/node --max-old-space-size=128 /var/www/BACKEND-RESTAURANT/index.js
+
+# Reinicio automático si falla
+Restart=on-failure
+RestartSec=5
+StartLimitBurst=3
+StartLimitIntervalSec=60
+
+# Límite de memoria total del proceso (incluye heap + buffers + stack)
+# systemd mata el proceso si excede este límite
+# Ajusta según RAM disponible en tu servidor
+MemoryMax=200M
+
+# Logs a journald (ver con: journalctl -u backend-restaurant -f)
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=backend-restaurant
+
+# Seguridad adicional (opcional, descomentar si necesitas)
+# NoNewPrivileges=true
+# PrivateTmp=true
+# ProtectSystem=strict
+# ProtectHome=true
+# ReadWritePaths=/var/www/BACKEND-RESTAURANT
+
+[Install]
+WantedBy=multi-user.target
