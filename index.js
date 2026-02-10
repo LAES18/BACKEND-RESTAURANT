@@ -1114,20 +1114,74 @@ api.delete('/dishes/:id', (req, res) => {
 api.delete('/users/:id', (req, res) => {
   const userId = req.params.id;
 
-  const deleteUserQuery = 'DELETE FROM users WHERE id = ?';
-  db.query(deleteUserQuery, [userId], (err, result) => {
-    if (err) {
-      console.error('Error al eliminar usuario:', err);
-      return res.status(500).send('Error al eliminar usuario');
-    } else if (result.affectedRows === 0) {
-      return res.status(404).send('Usuario no encontrado');
-    } else {
-      return res.status(200).send('Usuario eliminado exitosamente');
+  // VALIDACIÓN: Verificar si el usuario tiene órdenes asociadas
+  db.query('SELECT COUNT(*) as order_count FROM orders WHERE user_id = ?', [userId], (checkErr, checkResult) => {
+    if (checkErr) {
+      console.error('Error al verificar órdenes del usuario:', checkErr);
+      return res.status(500).send('Error al verificar órdenes del usuario');
     }
+
+    const orderCount = checkResult[0].order_count;
+    
+    if (orderCount > 0) {
+      console.warn(`⚠️ Intento de eliminar usuario ${userId} con ${orderCount} órdenes asociadas`);
+      return res.status(400).json({ 
+        error: 'No se puede eliminar el usuario porque tiene órdenes asociadas',
+        order_count: orderCount,
+        suggestion: 'Elimina primero las órdenes o asígnalas a otro usuario'
+      });
+    }
+
+    // Si no tiene órdenes, proceder con la eliminación
+    const deleteUserQuery = 'DELETE FROM users WHERE id = ?';
+    db.query(deleteUserQuery, [userId], (err, result) => {
+      if (err) {
+        console.error('Error al eliminar usuario:', err);
+        return res.status(500).send('Error al eliminar usuario');
+      } else if (result.affectedRows === 0) {
+        return res.status(404).send('Usuario no encontrado');
+      } else {
+        return res.status(200).send('Usuario eliminado exitosamente');
+      }
+    });
   });
 });
 
 // Actualizar la lógica del backend para manejar el estado 'pagado'
+// Ruta para eliminar una orden (con borrado en cascada)
+api.delete('/orders/:id', (req, res) => {
+  const orderId = req.params.id;
+
+  // BORRADO EN CASCADA: Primero eliminar pagos relacionados
+  db.query('DELETE FROM payments WHERE order_id = ?', [orderId], (err1) => {
+    if (err1) {
+      console.error('Error al eliminar pagos de la orden:', err1);
+      return res.status(500).send('Error al eliminar pagos relacionados');
+    }
+
+    // Luego eliminar items de la orden
+    db.query('DELETE FROM order_items WHERE order_id = ?', [orderId], (err2) => {
+      if (err2) {
+        console.error('Error al eliminar items de la orden:', err2);
+        return res.status(500).send('Error al eliminar items de la orden');
+      }
+
+      // Finalmente eliminar la orden
+      db.query('DELETE FROM orders WHERE id = ?', [orderId], (err3, result) => {
+        if (err3) {
+          console.error('Error al eliminar orden:', err3);
+          return res.status(500).send('Error al eliminar la orden');
+        } else if (result.affectedRows === 0) {
+          return res.status(404).send('Orden no encontrada');
+        } else {
+          console.log(`✅ Orden ${orderId} eliminada con todos sus registros relacionados`);
+          return res.status(200).send('Orden eliminada exitosamente');
+        }
+      });
+    });
+  });
+});
+
 api.post('/payments', (req, res) => {
   const payments = req.body;
 
@@ -1150,21 +1204,55 @@ api.post('/payments', (req, res) => {
     return new Promise((resolve, reject) => {
       const { order_id, total, method } = payment;
       console.log('Processing Payment:', payment); // Debugging log
-      db.query('INSERT INTO payments (order_id, total, method) VALUES (?, ?, ?)', [order_id, total, method], (err) => {
-        if (err) {
-          console.error('Error al insertar pago:', err, 'Payment Data:', payment); // Debugging log
-          reject(err);
-        } else {
-          // Cambiar el estado de la orden a 'pagado'
-          db.query('UPDATE orders SET status = ? WHERE id = ?', ['pagado', order_id], (err2) => {
-            if (err2) {
-              console.error('Error al actualizar estado de orden:', err2, 'Order ID:', order_id); // Debugging log
-              reject(err2);
-            } else {
-              resolve();
-            }
-          });
+      
+      // VALIDACIÓN DE TOTAL: Calcular el total en el backend
+      const calculateTotalQuery = `
+        SELECT SUM(d.price) as calculated_total
+        FROM order_items oi
+        JOIN dishes d ON oi.dish_id = d.id
+        WHERE oi.order_id = ?
+      `;
+      
+      db.query(calculateTotalQuery, [order_id], (calcErr, calcResult) => {
+        if (calcErr) {
+          console.error('Error al calcular total:', calcErr);
+          reject(calcErr);
+          return;
         }
+        
+        const calculatedTotal = parseFloat(calcResult[0].calculated_total || 0);
+        const receivedTotal = parseFloat(total);
+        
+        // Validar que el total recibido coincida con el calculado (tolerancia de 0.01 por redondeo)
+        if (Math.abs(calculatedTotal - receivedTotal) > 0.01) {
+          console.error('⚠️ ALERTA DE SEGURIDAD: Total no coincide!', {
+            order_id,
+            calculated: calculatedTotal,
+            received: receivedTotal,
+            difference: Math.abs(calculatedTotal - receivedTotal)
+          });
+          reject(new Error(`Total inválido. Calculado: ${calculatedTotal}, Recibido: ${receivedTotal}`));
+          return;
+        }
+        
+        // Si el total es correcto, proceder con el pago
+        db.query('INSERT INTO payments (order_id, total, method) VALUES (?, ?, ?)', [order_id, calculatedTotal, method], (err) => {
+          if (err) {
+            console.error('Error al insertar pago:', err, 'Payment Data:', payment); // Debugging log
+            reject(err);
+          } else {
+            // Cambiar el estado de la orden a 'pagado'
+            db.query('UPDATE orders SET status = ? WHERE id = ?', ['pagado', order_id], (err2) => {
+              if (err2) {
+                console.error('Error al actualizar estado de orden:', err2, 'Order ID:', order_id); // Debugging log
+                reject(err2);
+              } else {
+                console.log('✅ Pago validado y procesado:', { order_id, total: calculatedTotal });
+                resolve();
+              }
+            });
+          }
+        });
       });
     });
   });
@@ -1175,7 +1263,7 @@ api.post('/payments', (req, res) => {
       console.error('Error al procesar pagos:', err); // Debugging log
       res.status(500).send('Error al procesar pagos');
     });
-  });
+});
 
 // Ruta para actualizar detalles de usuario por ID
 api.put('/users/:id', (req, res) => {
