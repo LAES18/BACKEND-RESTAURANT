@@ -6,6 +6,7 @@ const mysql = require('mysql2');
 const bodyParser = require('body-parser');
 const cors = require('cors');
 const path = require('path');
+const bcrypt = require('bcrypt');
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -296,39 +297,68 @@ api.post('/register', (req, res) => {
     return res.status(400).json({ error: `Rol inválido. Debe ser uno de: ${allowedRoles.join(', ')}` });
   }
 
-  const query = 'INSERT INTO users (first_name, last_name, name, email, password, role) VALUES (?, ?, ?, ?, ?, ?)';
-  db.query(query, [firstName, lastName, fullName, email, password, role], (err) => {
-    if (err) {
-      console.error('Error al registrar usuario:', err);
-      // Log detallado para depuración
-      if (err.code === 'ER_DUP_ENTRY') {
-        return res.status(400).json({ error: 'El correo electrónico ya está registrado', details: err.sqlMessage });
-      }
-      return res.status(500).json({ error: 'Error al registrar usuario', details: err.sqlMessage || err.message || err });
+  // Hashear la contraseña antes de guardarla
+  bcrypt.hash(password, 10, (hashErr, hashedPassword) => {
+    if (hashErr) {
+      console.error('Error al hashear contraseña:', hashErr);
+      return res.status(500).json({ error: 'Error al procesar la contraseña' });
     }
-    // Retornar JSON en lugar de texto plano
-    res.status(201).json({ 
-      success: true, 
-      message: 'Usuario registrado exitosamente',
-      user: { first_name: firstName, last_name: lastName, name: fullName, email, role }
+
+    const query = 'INSERT INTO users (first_name, last_name, name, email, password, role) VALUES (?, ?, ?, ?, ?, ?)';
+    db.query(query, [firstName, lastName, fullName, email, hashedPassword, role], (err) => {
+      if (err) {
+        console.error('Error al registrar usuario:', err);
+        // Log detallado para depuración
+        if (err.code === 'ER_DUP_ENTRY') {
+          return res.status(400).json({ error: 'El correo electrónico ya está registrado', details: err.sqlMessage });
+        }
+        return res.status(500).json({ error: 'Error al registrar usuario', details: err.sqlMessage || err.message || err });
+      }
+      // Retornar JSON en lugar de texto plano
+      res.status(201).json({ 
+        success: true, 
+        message: 'Usuario registrado exitosamente',
+        user: { first_name: firstName, last_name: lastName, name: fullName, email, role }
+      });
     });
   });
 });
 
 api.post('/login', (req, res) => {
   const { email, password } = req.body;
-  const query = 'SELECT id, first_name, last_name, name, email, role FROM users WHERE (email = ? OR name = ?) AND password = ?';
-  db.query(query, [email, email, password], (err, results) => {
-    if (err || results.length === 0) {
-      res.status(401).send('Credenciales inválidas');
-    } else {
-      const user = results[0];
+  const query = 'SELECT id, first_name, last_name, name, email, password, role FROM users WHERE email = ? OR name = ?';
+  db.query(query, [email, email], (err, results) => {
+    if (err) {
+      console.error('Error en login:', err);
+      return res.status(500).send('Error en el servidor');
+    }
+    
+    if (results.length === 0) {
+      return res.status(401).send('Credenciales inválidas');
+    }
+
+    const user = results[0];
+    
+    // Comparar la contraseña con bcrypt
+    bcrypt.compare(password, user.password, (compareErr, isMatch) => {
+      if (compareErr) {
+        console.error('Error al comparar contraseña:', compareErr);
+        return res.status(500).send('Error en el servidor');
+      }
+      
+      if (!isMatch) {
+        return res.status(401).send('Credenciales inválidas');
+      }
+      
       // Asegurarse de que el nombre completo está disponible
       if (!user.name && user.first_name) {
         user.name = `${user.first_name} ${user.last_name || ''}`.trim();
       }
+      
+      // No enviar la contraseña en la respuesta
+      delete user.password;
       res.status(200).json(user);
-    }
+    });
   });
 });
 
@@ -1158,25 +1188,44 @@ api.put('/users/:id', (req, res) => {
   }
 
   // Si no se envía contraseña o es 'unchanged', no la actualizamos
-  let query, params;
   if (password && password !== 'unchanged' && password.trim() !== '') {
-    query = 'UPDATE users SET name = ?, email = ?, password = ?, role = ? WHERE id = ?';
-    params = [name, email, password, role, userId];
-  } else {
-    query = 'UPDATE users SET name = ?, email = ?, role = ? WHERE id = ?';
-    params = [name, email, role, userId];
-  }
+    // Hashear la nueva contraseña antes de actualizar
+    bcrypt.hash(password, 10, (hashErr, hashedPassword) => {
+      if (hashErr) {
+        console.error('Error al hashear contraseña:', hashErr);
+        return res.status(500).send('Error al procesar la contraseña');
+      }
 
-  db.query(query, params, (err, result) => {
-    if (err) {
-      console.error('Error al actualizar usuario:', err);
-      return res.status(500).send('Error al actualizar usuario');
-    } else if (result.affectedRows === 0) {
-      return res.status(404).send('Usuario no encontrado');
-    } else {
-      return res.status(200).send('Usuario actualizado exitosamente');
-    }
-  });
+      const query = 'UPDATE users SET name = ?, email = ?, password = ?, role = ? WHERE id = ?';
+      const params = [name, email, hashedPassword, role, userId];
+
+      db.query(query, params, (err, result) => {
+        if (err) {
+          console.error('Error al actualizar usuario:', err);
+          return res.status(500).send('Error al actualizar usuario');
+        } else if (result.affectedRows === 0) {
+          return res.status(404).send('Usuario no encontrado');
+        } else {
+          return res.status(200).send('Usuario actualizado exitosamente');
+        }
+      });
+    });
+  } else {
+    // Si no se cambia la contraseña, solo actualizar otros campos
+    const query = 'UPDATE users SET name = ?, email = ?, role = ? WHERE id = ?';
+    const params = [name, email, role, userId];
+
+    db.query(query, params, (err, result) => {
+      if (err) {
+        console.error('Error al actualizar usuario:', err);
+        return res.status(500).send('Error al actualizar usuario');
+      } else if (result.affectedRows === 0) {
+        return res.status(404).send('Usuario no encontrado');
+      } else {
+        return res.status(200).send('Usuario actualizado exitosamente');
+      }
+    });
+  }
 });
 
 // Ruta para cerrar sesión (logout)
