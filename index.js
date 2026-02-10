@@ -10,7 +10,7 @@ const path = require('path');
 const app = express();
 const port = process.env.PORT || 3001;
 
-// CORS config - Railway + Servidor Local
+// CORS config - Railway + Servidor Local + Cloudflare Tunnel
 const allowedOrigins = [
   'https://frontend-restaurant-production.up.railway.app', // correct domain (https)
   'http://frontend-restaurant-production.up.railway.app', // correct domain (http)
@@ -20,7 +20,8 @@ const allowedOrigins = [
   'http://localhost:5176',  // Added the correct port
   'http://192.168.0.12',     // Servidor local IP
   'http://192.168.0.12:3000', // Servidor local con puerto
-  'http://192.168.0.12:80'    // Nginx puerto 80
+  'http://192.168.0.12:80',   // Nginx puerto 80
+  'https://restaurante.lesterex.cloud' // Cloudflare Tunnel domain
 ];
 
 app.use(cors({
@@ -96,6 +97,8 @@ const initializeDatabase = async () => {
   const queries = [
     `CREATE TABLE IF NOT EXISTS users (
       id INT AUTO_INCREMENT PRIMARY KEY,
+      first_name VARCHAR(100) NOT NULL,
+      last_name VARCHAR(100) NOT NULL,
       name VARCHAR(255) NOT NULL,
       email VARCHAR(255) UNIQUE NOT NULL,
       password VARCHAR(255) NOT NULL,
@@ -104,12 +107,13 @@ const initializeDatabase = async () => {
     `CREATE TABLE IF NOT EXISTS dishes (
       id INT AUTO_INCREMENT PRIMARY KEY,
       name VARCHAR(255) NOT NULL,
-      type ENUM('desayuno', 'almuerzo', 'cena') NOT NULL,
+      type ENUM('desayuno', 'almuerzo', 'cena', 'bebida', 'postre', 'principal') NOT NULL DEFAULT 'principal',
       price DECIMAL(10, 2) NOT NULL
     );`,
     `CREATE TABLE IF NOT EXISTS orders (
       id INT AUTO_INCREMENT PRIMARY KEY,
       user_id INT NOT NULL,
+      waiter_name VARCHAR(255),
       status ENUM('pendiente', 'en_proceso', 'servido', 'pagado') DEFAULT 'pendiente',
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       mesa VARCHAR(10),
@@ -164,14 +168,49 @@ db.query("SHOW COLUMNS FROM orders LIKE 'dish_id'", (err, results) => {
 // Modificaciones para soportar órdenes con múltiples platillos y mesa
 const alterQueries = [
   `ALTER TABLE orders ADD COLUMN mesa VARCHAR(10)`,
-  `ALTER TABLE payments ADD COLUMN method VARCHAR(50)`
+  `ALTER TABLE orders ADD COLUMN waiter_name VARCHAR(255)`,
+  `ALTER TABLE orders ADD COLUMN daily_order_number INT`,
+  `ALTER TABLE orders ADD COLUMN notes TEXT`,
+  `ALTER TABLE users ADD COLUMN first_name VARCHAR(100)`,
+  `ALTER TABLE users ADD COLUMN last_name VARCHAR(100)`,
+  `ALTER TABLE payments ADD COLUMN method VARCHAR(50)`,
+  `ALTER TABLE dishes MODIFY COLUMN type ENUM('desayuno', 'almuerzo', 'cena', 'bebida', 'postre', 'principal') NOT NULL DEFAULT 'principal'`,
+  `ALTER TABLE order_items ADD COLUMN status VARCHAR(20) DEFAULT 'pendiente'`
 ];
 
-alterQueries.forEach((query) => {
+// Ejecutar migraciones secuencialmente para evitar deadlocks
+let migrationIndex = 0;
+function runNextMigration() {
+  if (migrationIndex >= alterQueries.length) {
+    // Después de agregar la columna status, actualizar items antiguos
+    setTimeout(() => {
+      db.query(`
+        UPDATE order_items oi
+        JOIN orders o ON oi.order_id = o.id
+        SET oi.status = 'servido'
+        WHERE oi.status = 'pendiente' 
+        AND o.status IN ('servido', 'pagado')
+      `, (err) => {
+        if (err) {
+          console.error('[DATA MIGRATION] Error al actualizar items antiguos:', err.code);
+        } else {
+          console.log('[DATA MIGRATION] Items antiguos actualizados a servido');
+        }
+      });
+    }, 500);
+    return;
+  }
+  
+  const query = alterQueries[migrationIndex];
   db.query(query, (err) => {
-    // Ignorar errores si la columna ya existe
+    if (err && err.code !== 'ER_DUP_FIELDNAME' && err.code !== 'ER_CANT_DROP_FIELD_OR_KEY') {
+      console.error('[MIGRATION ERROR]', query.substring(0, 50), ':', err.code);
+    }
+    migrationIndex++;
+    setTimeout(runNextMigration, 100); // Esperar 100ms entre migraciones
   });
-});
+}
+runNextMigration();
 
 // La tabla order_items ya se crea en initializeDatabase, así que eliminamos esta duplicación
 
@@ -222,15 +261,25 @@ api.options('*', (req, res) => {
 
 // Rutas para manejar roles y autenticación
 api.post('/register', (req, res) => {
-  const { name, email, password, role } = req.body;
+  const { first_name, last_name, name, email, password, role } = req.body;
 
   // Log de los datos recibidos
-  console.log('Intentando registrar usuario:', { name, email, password, role });
+  console.log('Intentando registrar usuario:', { first_name, last_name, name, email, password, role });
 
   // Validar que todos los campos estén presentes
-  if (!name || !email || !password || !role) {
+  if (!email || !password || !role) {
     console.log('Faltan campos en el registro:', req.body);
-    return res.status(400).json({ error: 'Todos los campos son obligatorios' });
+    return res.status(400).json({ error: 'Email, password y rol son obligatorios' });
+  }
+
+  // Si se proporcionan first_name y last_name, usarlos; si no, usar name
+  const firstName = first_name || name || '';
+  const lastName = last_name || '';
+  const fullName = first_name && last_name ? `${first_name} ${last_name}` : name || `${firstName} ${lastName}`.trim();
+
+  if (!firstName) {
+    console.log('Falta nombre en el registro:', req.body);
+    return res.status(400).json({ error: 'El nombre es obligatorio' });
   }
 
   // Validar formato del correo electrónico
@@ -247,8 +296,8 @@ api.post('/register', (req, res) => {
     return res.status(400).json({ error: `Rol inválido. Debe ser uno de: ${allowedRoles.join(', ')}` });
   }
 
-  const query = 'INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)';
-  db.query(query, [name, email, password, role], (err) => {
+  const query = 'INSERT INTO users (first_name, last_name, name, email, password, role) VALUES (?, ?, ?, ?, ?, ?)';
+  db.query(query, [firstName, lastName, fullName, email, password, role], (err) => {
     if (err) {
       console.error('Error al registrar usuario:', err);
       // Log detallado para depuración
@@ -261,19 +310,24 @@ api.post('/register', (req, res) => {
     res.status(201).json({ 
       success: true, 
       message: 'Usuario registrado exitosamente',
-      user: { name, email, role }
+      user: { first_name: firstName, last_name: lastName, name: fullName, email, role }
     });
   });
 });
 
 api.post('/login', (req, res) => {
   const { email, password } = req.body;
-  const query = 'SELECT * FROM users WHERE (email = ? OR name = ?) AND password = ?';
+  const query = 'SELECT id, first_name, last_name, name, email, role FROM users WHERE (email = ? OR name = ?) AND password = ?';
   db.query(query, [email, email, password], (err, results) => {
     if (err || results.length === 0) {
       res.status(401).send('Credenciales inválidas');
     } else {
-      res.status(200).json(results[0]);
+      const user = results[0];
+      // Asegurarse de que el nombre completo está disponible
+      if (!user.name && user.first_name) {
+        user.name = `${user.first_name} ${user.last_name || ''}`.trim();
+      }
+      res.status(200).json(user);
     }
   });
 });
@@ -296,27 +350,136 @@ api.get('/dishes', (req, res) => {
   });
 });
 
-api.post('/dishes', (req, res) => {
-  const { name, type, price } = req.body;
-  const query = 'INSERT INTO dishes (name, type, price) VALUES (?, ?, ?)';
-  db.query(query, [name, type, price], (err) => {
-    if (err) {
-      res.status(500).send('Error al agregar platillo');
-    } else {
-      res.status(200).send('Platillo agregado exitosamente');
+// Endpoint para importar platillos desde Excel (bulk)
+api.post('/dishes/bulk', (req, res) => {
+  const dishes = req.body;
+  
+  if (!Array.isArray(dishes) || dishes.length === 0) {
+    return res.status(400).json({ error: 'Se requiere un array de platillos' });
+  }
+  
+  // Validar cada platillo
+  for (let i = 0; i < dishes.length; i++) {
+    const dish = dishes[i];
+    if (!dish.name || !dish.price) {
+      return res.status(400).json({
+        error: `Platillo ${i + 1}: Nombre y precio son obligatorios`
+      });
     }
+  }
+  
+  // Insertar todos los platillos
+  const values = dishes.map(dish => [
+    dish.name,
+    dish.type || 'principal',
+    parseFloat(dish.price),
+    dish.image_url || null
+  ]);
+  
+  db.query(
+    'INSERT INTO dishes (name, type, price, image_url) VALUES ?',
+    [values],
+    (err, result) => {
+      if (err) {
+        console.error('Error al importar platillos:', err);
+        return res.status(500).json({ error: 'Error al importar platillos', details: err.message });
+      }
+      res.status(200).json({
+        message: 'Platillos importados exitosamente',
+        insertedCount: result.affectedRows
+      });
+    }
+  );
+});
+
+// Endpoint para actualizar un platillo
+api.put('/dishes/:id', (req, res) => {
+  const dishId = req.params.id;
+  const { name, price, type, image_url } = req.body;
+  
+  // Construir query dinámicamente
+  const updates = [];
+  const values = [];
+  
+  if (name !== undefined) {
+    updates.push('name = ?');
+    values.push(name);
+  }
+  if (price !== undefined) {
+    updates.push('price = ?');
+    values.push(parseFloat(price));
+  }
+  if (type !== undefined) {
+    updates.push('type = ?');
+    values.push(type);
+  }
+  if (image_url !== undefined) {
+    updates.push('image_url = ?');
+    values.push(image_url || null);
+  }
+  
+  if (updates.length === 0) {
+    return res.status(400).json({ error: 'No se proporcionaron campos para actualizar' });
+  }
+  
+  values.push(dishId);
+  const query = `UPDATE dishes SET ${updates.join(', ')} WHERE id = ?`;
+  
+  db.query(query, values, (err, result) => {
+    if (err) {
+      console.error('Error al actualizar platillo:', err);
+      return res.status(500).json({ error: 'Error al actualizar platillo', details: err.message });
+    }
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Platillo no encontrado' });
+    }
+    res.status(200).json({ message: 'Platillo actualizado exitosamente' });
+  });
+});
+
+api.post('/dishes', (req, res) => {
+  const { name, type, price, image_url } = req.body;
+  
+  // Validar campos requeridos
+  if (!name || !price) {
+    return res.status(400).json({ error: 'Nombre y precio son obligatorios' });
+  }
+  
+  // Si no se proporciona tipo, usar 'principal' por defecto
+  const dishType = type || 'principal';
+  const imageValue = image_url || null;
+  
+  const query = 'INSERT INTO dishes (name, type, price, image_url) VALUES (?, ?, ?, ?)';
+  db.query(query, [name, dishType, price, imageValue], (err, result) => {
+    if (err) {
+      console.error('Error al agregar platillo:', err);
+      return res.status(500).json({ error: 'Error al agregar platillo', details: err.message });
+    }
+    res.status(200).json({ 
+      success: true, 
+      message: 'Platillo agregado exitosamente',
+      id: result.insertId 
+    });
   });
 });
 
 // Rutas para manejar órdenes
 api.get('/orders', (req, res) => {
-  const { status, date, month } = req.query;
-  let query = `SELECT o.*, GROUP_CONCAT(d.name ORDER BY oi.id) as dishes, GROUP_CONCAT(d.type ORDER BY oi.id) as types, GROUP_CONCAT(d.price ORDER BY oi.id) as prices FROM orders o
+  const { status, date, month, unpaid } = req.query;
+  let query = `SELECT o.*, 
+    GROUP_CONCAT(d.name ORDER BY oi.id) as dishes, 
+    GROUP_CONCAT(d.type ORDER BY oi.id) as types, 
+    GROUP_CONCAT(d.price ORDER BY oi.id) as prices,
+    MAX(p.id) as payment_id
+    FROM orders o
     JOIN order_items oi ON o.id = oi.order_id
-    JOIN dishes d ON oi.dish_id = d.id`;
+    JOIN dishes d ON oi.dish_id = d.id
+    LEFT JOIN payments p ON o.id = p.order_id`;
   const params = [];
 
   let where = [];
+  let having = [];
+  
   if (status) {
     where.push('o.status = ?');
     params.push(status);
@@ -329,14 +492,25 @@ api.get('/orders', (req, res) => {
     where.push('DATE_FORMAT(o.created_at, "%Y-%m") = DATE_FORMAT(?, "%Y-%m")');
     params.push(month);
   }
+  
   if (where.length > 0) {
     query += ' WHERE ' + where.join(' AND ');
   }
 
-  query += ' GROUP BY o.id ORDER BY o.created_at ASC, o.mesa ASC';
+  query += ' GROUP BY o.id';
+  
+  if (unpaid === 'true') {
+    query += ' HAVING MAX(p.id) IS NULL';
+  }
+  
+  query += ' ORDER BY o.created_at ASC, o.mesa ASC';
+
+  console.log('[DEBUG] Query:', query);
+  console.log('[DEBUG] Params:', params);
 
   db.query(query, params, (err, results) => {
     if (err) {
+      console.error('[ERROR] Error en query /api/orders:', err);
       res.status(500).send('Error al obtener órdenes');
     } else {
       // Asegura que los campos dishes/types/prices sean arrays y price sea numérico
@@ -347,13 +521,20 @@ api.get('/orders', (req, res) => {
           typesArr = r.types.split(',');
           pricesArr = r.prices.split(',');
         }
+        
+        // Crear array de platos y calcular total
+        const dishesWithPrices = dishesArr.map((name, i) => ({
+          name,
+          type: typesArr[i],
+          price: Number.isFinite(parseFloat(pricesArr[i])) ? parseFloat(pricesArr[i]) : 0
+        }));
+        
+        const total = dishesWithPrices.reduce((sum, dish) => sum + dish.price, 0);
+        
         return {
           ...r,
-          dishes: dishesArr.map((name, i) => ({
-            name,
-            type: typesArr[i],
-            price: Number.isFinite(parseFloat(pricesArr[i])) ? parseFloat(pricesArr[i]) : 0
-          }))
+          dishes: dishesWithPrices,
+          total: total
         };
       });
       res.status(200).json(formatted);
@@ -361,20 +542,92 @@ api.get('/orders', (req, res) => {
   });
 });
 
+// Endpoint específico para cocina: devuelve órdenes con items pendientes de preparar
+api.get('/orders/kitchen', (req, res) => {
+  const query = `
+    SELECT o.*, 
+      GROUP_CONCAT(CASE WHEN oi.status = 'pendiente' THEN d.name END ORDER BY oi.id) as pending_dishes,
+      GROUP_CONCAT(CASE WHEN oi.status = 'pendiente' THEN d.type END ORDER BY oi.id) as pending_types,
+      GROUP_CONCAT(CASE WHEN oi.status = 'pendiente' THEN d.price END ORDER BY oi.id) as pending_prices
+    FROM orders o
+    JOIN order_items oi ON o.id = oi.order_id
+    JOIN dishes d ON oi.dish_id = d.id
+    WHERE oi.status = 'pendiente'
+    GROUP BY o.id
+    ORDER BY o.created_at ASC, o.mesa ASC
+  `;
+  
+  db.query(query, (err, results) => {
+    if (err) {
+      console.error('[ERROR] Error en query /api/orders/kitchen:', err);
+      return res.status(500).send('Error al obtener órdenes de cocina');
+    }
+    
+    const formatted = results.map(r => {
+      let dishesArr = [], typesArr = [], pricesArr = [];
+      if (r.pending_dishes && r.pending_types && r.pending_prices) {
+        dishesArr = r.pending_dishes.split(',').filter(Boolean);
+        typesArr = r.pending_types.split(',').filter(Boolean);
+        pricesArr = r.pending_prices.split(',').filter(Boolean);
+      }
+      
+      const dishesWithPrices = dishesArr.map((name, i) => ({
+        name,
+        type: typesArr[i],
+        price: parseFloat(pricesArr[i]) || 0
+      }));
+      
+      const total = dishesWithPrices.reduce((sum, dish) => sum + dish.price, 0);
+      
+      return {
+        ...r,
+        dishes: dishesWithPrices,
+        total: total
+      };
+    });
+    
+    res.status(200).json(formatted);
+  });
+});
+
 api.post('/orders', (req, res) => {
-  const { dishes, user_id, mesa } = req.body;
+  const { dishes, user_id, mesa, waiter_name, notes } = req.body;
   if (!dishes || !Array.isArray(dishes) || dishes.length === 0) {
     return res.status(400).send('No se enviaron platillos');
   }
-  // Revertir el cambio para que el estado inicial no sea 'servido'
-  const orderQuery = 'INSERT INTO orders (user_id, mesa) VALUES (?, ?)';
-  db.query(orderQuery, [user_id, mesa], (err, result) => {
-    if (err) return res.status(500).send('Error al crear orden');
-    const orderId = result.insertId;
-    const items = dishes.map(d => [orderId, d.dish_id]);
-    db.query('INSERT INTO order_items (order_id, dish_id) VALUES ?', [items], (err2) => {
-      if (err2) return res.status(500).send('Error al agregar platillos a la orden');
-      res.status(200).json({ orderId });
+  
+  // Obtener el número de orden del día actual
+  const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+  const getDailyNumberQuery = `
+    SELECT COALESCE(MAX(daily_order_number), 0) + 1 as next_number 
+    FROM orders 
+    WHERE DATE(created_at) = ?
+  `;
+  
+  db.query(getDailyNumberQuery, [today], (err, result) => {
+    if (err) {
+      console.error('Error al obtener número de orden diario:', err);
+      return res.status(500).send('Error al obtener número de orden');
+    }
+    
+    const dailyOrderNumber = result[0].next_number;
+    
+    // Crear la orden con el número diario y notas
+    const orderQuery = 'INSERT INTO orders (user_id, mesa, waiter_name, daily_order_number, notes) VALUES (?, ?, ?, ?, ?)';
+    db.query(orderQuery, [user_id, mesa, waiter_name || null, dailyOrderNumber, notes || null], (err, result) => {
+      if (err) {
+        console.error('Error al crear orden:', err);
+        return res.status(500).send('Error al crear orden');
+      }
+      const orderId = result.insertId;
+      const items = dishes.map(d => [orderId, d.dish_id, 'pendiente']);
+      db.query('INSERT INTO order_items (order_id, dish_id, status) VALUES ?', [items], (err2) => {
+        if (err2) {
+          console.error('Error al agregar platillos:', err2);
+          return res.status(500).send('Error al agregar platillos a la orden');
+        }
+        res.status(200).json({ orderId, dailyOrderNumber });
+      });
     });
   });
 });
@@ -382,29 +635,94 @@ api.post('/orders', (req, res) => {
 // Actualizar estado de la orden (para cocina)
 api.patch('/orders/:id', (req, res) => {
   const { status } = req.body;
-  db.query('UPDATE orders SET status = ? WHERE id = ?', [status, req.params.id], (err) => {
+  const orderId = req.params.id;
+  
+  db.query('UPDATE orders SET status = ? WHERE id = ?', [status, orderId], (err) => {
     if (err) return res.status(500).send('Error al actualizar estado');
+    
+    // Si se marca como 'servido', marcar todos los items pendientes como 'servido'
+    if (status === 'servido') {
+      db.query('UPDATE order_items SET status = ? WHERE order_id = ? AND status = ?', 
+        ['servido', orderId, 'pendiente'], (itemErr) => {
+          if (itemErr) {
+            console.error('Error al actualizar status de items:', itemErr);
+          }
+        });
+    }
+    
     res.status(200).send('Estado actualizado');
   });
+});
+
+// Actualizar orden - agregar platillos y/o actualizar notas
+api.put('/orders/:id', (req, res) => {
+  const orderId = req.params.id;
+  const { newDishes, notes, waiter_name } = req.body;
+  
+  // Actualizar las notas y/o nombre del mesero si se enviaron
+  const updateFields = [];
+  const updateValues = [];
+  
+  if (notes !== undefined) {
+    updateFields.push('notes = ?');
+    updateValues.push(notes);
+  }
+  
+  if (waiter_name !== undefined) {
+    updateFields.push('waiter_name = ?');
+    updateValues.push(waiter_name);
+  }
+  
+  if (updateFields.length > 0) {
+    updateValues.push(orderId);
+    const updateQuery = `UPDATE orders SET ${updateFields.join(', ')} WHERE id = ?`;
+    db.query(updateQuery, updateValues, (err) => {
+      if (err) {
+        console.error('Error al actualizar orden:', err);
+        return res.status(500).json({ error: 'Error al actualizar orden' });
+      }
+    });
+  }
+  
+  // Si hay nuevos platillos, agregarlos con status='pendiente' para que pasen por cocina
+  // IMPORTANTE: La orden mantiene su status actual (servido), solo los nuevos items van a cocina
+  if (newDishes && Array.isArray(newDishes) && newDishes.length > 0) {
+    const items = newDishes.map(d => [orderId, d.dish_id, 'pendiente']);
+    db.query('INSERT INTO order_items (order_id, dish_id, status) VALUES ?', [items], (err) => {
+      if (err) {
+        console.error('Error al agregar nuevos platillos:', err);
+        return res.status(500).json({ error: 'Error al agregar platillos' });
+      }
+      
+      // NO cambiar el status de la orden - la orden sigue en "servido" (caja)
+      // Solo los nuevos items tienen status='pendiente' y aparecerán en cocina
+      res.status(200).json({ message: 'Orden actualizada correctamente, nuevos platillos enviados a cocina' });
+    });
+  } else {
+    res.status(200).json({ message: 'Orden actualizada correctamente' });
+  }
 });
 
 // Rutas para manejar cobros
 api.get('/payments', (req, res) => {
   const { date, month } = req.query;
-  let query = 'SELECT * FROM payments';
+  let query = `SELECT p.*, o.mesa, o.waiter_name 
+               FROM payments p 
+               LEFT JOIN orders o ON p.order_id = o.id`;
   const params = [];
   let where = [];
   if (date) {
-    where.push('DATE(paid_at) = DATE(?)');
+    where.push('DATE(p.paid_at) = DATE(?)');
     params.push(date);
   }
   if (month) {
-    where.push('DATE_FORMAT(paid_at, "%Y-%m") = DATE_FORMAT(?, "%Y-%m")');
+    where.push('DATE_FORMAT(p.paid_at, "%Y-%m") = DATE_FORMAT(?, "%Y-%m")');
     params.push(month);
   }
   if (where.length > 0) {
     query += ' WHERE ' + where.join(' AND ');
   }
+  query += ' ORDER BY p.paid_at DESC';
   db.query(query, params, (err, results) => {
     if (err) {
       res.status(500).send('Error al obtener pagos');
@@ -414,42 +732,58 @@ api.get('/payments', (req, res) => {
   });
 });
 
-// Ruta para reportes de pagos
+// Ruta para reportes de pagos con detalles completos
 api.get('/payments/report', (req, res) => {
   const { type, date } = req.query;
   
-  if (!type || !date) {
+  if (!type) {
     return res.status(400).json({
       error: 'Parámetros incompletos',
-      details: 'Se requieren los parámetros type y date'
+      details: 'Se requiere el parámetro type'
     });
   }
 
+  if (type !== 'diario' && type !== 'mensual') {
+    return res.status(400).json({
+      error: 'Tipo de reporte inválido',
+      details: 'El tipo debe ser "diario" o "mensual"'
+    });
+  }
+
+  const today = new Date().toISOString().split('T')[0];
+  const reportDate = date || today;
+  
+  // Query para obtener todos los detalles de ventas
   let query = `
-    SELECT p.*, o.mesa, o.created_at as order_date,
-           GROUP_CONCAT(d.name) as dishes,
-           GROUP_CONCAT(d.price) as prices
+    SELECT 
+      p.id as payment_id,
+      p.order_id,
+      o.daily_order_number,
+      DATE_FORMAT(p.paid_at, '%Y-%m-%d') as fecha,
+      p.total as total_orden,
+      p.method,
+      o.mesa,
+      o.waiter_name as mesero,
+      d.name as producto,
+      d.price as precio_producto,
+      d.type as tipo_producto
     FROM payments p
-    JOIN orders o ON p.order_id = o.id
-    JOIN order_items oi ON o.id = oi.order_id
-    JOIN dishes d ON oi.dish_id = d.id`;
+    INNER JOIN orders o ON p.order_id = o.id
+    INNER JOIN order_items oi ON o.id = oi.order_id
+    INNER JOIN dishes d ON oi.dish_id = d.id
+  `;
 
   const params = [];
 
-  if (type === 'mensual') {
-    query += ' WHERE DATE_FORMAT(p.paid_at, "%Y-%m") = DATE_FORMAT(?, "%Y-%m")';
-    params.push(date);
-  } else if (type === 'diario') {
+  if (type === 'diario') {
     query += ' WHERE DATE(p.paid_at) = DATE(?)';
-    params.push(date);
-  } else {
-    return res.status(400).json({
-      error: 'Tipo de reporte inválido',
-      details: 'El tipo debe ser "mensual" o "diario"'
-    });
+    params.push(reportDate);
+  } else if (type === 'mensual') {
+    query += ' WHERE DATE_FORMAT(p.paid_at, "%Y-%m") = DATE_FORMAT(?, "%Y-%m")';
+    params.push(reportDate);
   }
 
-  query += ' GROUP BY p.id ORDER BY p.paid_at DESC';
+  query += ' ORDER BY p.paid_at ASC, p.id, d.name';
 
   db.query(query, params, (err, results) => {
     if (err) {
@@ -460,35 +794,57 @@ api.get('/payments/report', (req, res) => {
       });
     }
 
-    // Procesar los resultados para incluir los platillos como array
-    const processed = results.map(r => {
-      const dishesArr = r.dishes ? r.dishes.split(',') : [];
-      const pricesArr = r.prices ? r.prices.split(',').map(p => parseFloat(p)) : [];
+    // Agrupar resultados por fecha
+    const reportByDate = {};
+    let totalGeneral = 0;
+
+    results.forEach(row => {
+      const fecha = row.fecha;
       
-      return {
-        ...r,
-        dishes: dishesArr.map((name, i) => ({
-          name,
-          price: pricesArr[i] || 0
-        }))
-      };
+      if (!reportByDate[fecha]) {
+        reportByDate[fecha] = {
+          fecha: fecha,
+          ordenes: [],
+          totalDia: 0,
+          numeroOrdenes: 0
+        };
+      }
+
+      // Buscar si ya existe esta orden
+      let orden = reportByDate[fecha].ordenes.find(o => o.order_id === row.order_id);
+      
+      if (!orden) {
+        orden = {
+          order_id: row.order_id,
+          daily_order_number: row.daily_order_number,
+          mesa: row.mesa,
+          mesero: row.mesero,
+          method: row.method,
+          total: parseFloat(row.total_orden),
+          productos: []
+        };
+        reportByDate[fecha].ordenes.push(orden);
+        reportByDate[fecha].totalDia += parseFloat(row.total_orden);
+        reportByDate[fecha].numeroOrdenes++;
+        totalGeneral += parseFloat(row.total_orden);
+      }
+
+      // Agregar producto a la orden
+      orden.productos.push({
+        nombre: row.producto,
+        precio: parseFloat(row.precio_producto),
+        tipo: row.tipo_producto
+      });
     });
 
-    // Calcular totales
-    const summary = {
-      total: processed.reduce((sum, p) => sum + p.total, 0),
-      count: processed.length,
-      byMethod: processed.reduce((acc, p) => {
-        acc[p.method] = (acc[p.method] || 0) + p.total;
-        return acc;
-      }, {})
-    };
+    // Convertir a array
+    const reportArray = Object.values(reportByDate);
 
     res.status(200).json({
-      period: type,
-      date: date,
-      summary,
-      details: processed
+      type: type,
+      date: reportDate,
+      totalGeneral: totalGeneral,
+      datos: reportArray
     });
   });
 });
@@ -553,6 +909,149 @@ api.get('/users', (req, res) => {
     } else {
       res.json(results);
     }
+  });
+});
+
+// Endpoint para importar platillos desde Excel (bulk)
+api.post('/dishes/bulk', (req, res) => {
+  const dishes = req.body;
+  
+  if (!Array.isArray(dishes) || dishes.length === 0) {
+    return res.status(400).json({ error: 'Se requiere un array de platillos' });
+  }
+  
+  // Validar cada platillo
+  for (let i = 0; i < dishes.length; i++) {
+    const dish = dishes[i];
+    if (!dish.name || !dish.price) {
+      return res.status(400).json({
+        error: `Platillo ${i + 1}: Nombre y precio son obligatorios`
+      });
+    }
+  }
+  
+  // Insertar todos los platillos
+  const values = dishes.map(dish => [
+    dish.name,
+    dish.type || 'principal',
+    parseFloat(dish.price),
+    dish.image_url || null
+  ]);
+  
+  db.query(
+    'INSERT INTO dishes (name, type, price, image_url) VALUES ?',
+    [values],
+    (err, result) => {
+      if (err) {
+        console.error('Error al importar platillos:', err);
+        return res.status(500).json({ error: 'Error al importar platillos', details: err.message });
+      }
+      res.status(200).json({
+        message: 'Platillos importados exitosamente',
+        insertedCount: result.affectedRows
+      });
+    }
+  );
+});
+
+// Endpoint para actualizar un platillo
+api.put('/dishes/:id', (req, res) => {
+  const dishId = req.params.id;
+  const { name, price, type, image_url } = req.body;
+  
+  // Construir query dinámicamente
+  const updates = [];
+  const values = [];
+  
+  if (name !== undefined) {
+    updates.push('name = ?');
+    values.push(name);
+  }
+  if (price !== undefined) {
+    updates.push('price = ?');
+    values.push(parseFloat(price));
+  }
+  if (type !== undefined) {
+    updates.push('type = ?');
+    values.push(type);
+  }
+  if (image_url !== undefined) {
+    updates.push('image_url = ?');
+    values.push(image_url || null);
+  }
+  
+  if (updates.length === 0) {
+    return res.status(400).json({ error: 'No se proporcionaron campos para actualizar' });
+  }
+  
+  values.push(dishId);
+  const query = `UPDATE dishes SET ${updates.join(', ')} WHERE id = ?`;
+  
+  db.query(query, values, (err, result) => {
+    if (err) {
+      console.error('Error al actualizar platillo:', err);
+      return res.status(500).json({ error: 'Error al actualizar platillo', details: err.message });
+    }
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Platillo no encontrado' });
+    }
+    res.status(200).json({ message: 'Platillo actualizado exitosamente' });
+  });
+});
+
+// Endpoint para actualizar un platillo
+api.put('/dishes/:id', (req, res) => {
+  const dishId = req.params.id;
+  const { name, price, type, image_url } = req.body;
+  
+  // Validar que type sea uno de los valores permitidos si se proporciona
+  if (type) {
+    const validTypes = ['desayuno', 'almuerzo', 'cena', 'bebida', 'postre', 'entrada', 'plato_fuerte', 'guarnicion', 'aperitivo', 'snack', 'principal'];
+    if (!validTypes.includes(type)) {
+      return res.status(400).json({
+        error: 'Tipo de platillo inválido',
+        details: `El tipo debe ser uno de: ${validTypes.join(', ')}`
+      });
+    }
+  }
+  
+  // Construir query dinámicamente
+  const updates = [];
+  const values = [];
+  
+  if (name !== undefined) {
+    updates.push('name = ?');
+    values.push(name);
+  }
+  if (price !== undefined) {
+    updates.push('price = ?');
+    values.push(parseFloat(price));
+  }
+  if (type !== undefined) {
+    updates.push('type = ?');
+    values.push(type);
+  }
+  if (image_url !== undefined) {
+    updates.push('image_url = ?');
+    values.push(image_url || null);
+  }
+  
+  if (updates.length === 0) {
+    return res.status(400).json({ error: 'No se proporcionaron campos para actualizar' });
+  }
+  
+  values.push(dishId);
+  const query = `UPDATE dishes SET ${updates.join(', ')} WHERE id = ?`;
+  
+  db.query(query, values, (err, result) => {
+    if (err) {
+      console.error('Error al actualizar platillo:', err);
+      return res.status(500).json({ error: 'Error al actualizar platillo', details: err.message });
+    }
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Platillo no encontrado' });
+    }
+    res.status(200).json({ message: 'Platillo actualizado exitosamente' });
   });
 });
 
