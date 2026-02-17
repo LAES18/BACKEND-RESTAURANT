@@ -103,7 +103,7 @@ const initializeDatabase = async () => {
       name VARCHAR(255) NOT NULL,
       email VARCHAR(255) UNIQUE NOT NULL,
       password VARCHAR(255) NOT NULL,
-      role ENUM('administrador', 'mesero', 'cocina', 'cobrador') NOT NULL
+      role ENUM('super_admin', 'administrador', 'mesero', 'cocina', 'cobrador') NOT NULL
     );`,
     `CREATE TABLE IF NOT EXISTS dishes (
       id INT AUTO_INCREMENT PRIMARY KEY,
@@ -220,8 +220,8 @@ const checkRoleEnum = `SHOW COLUMNS FROM users LIKE 'role';`;
 db.query(checkRoleEnum, (err, results) => {
   if (!err && results && results[0]) {
     const type = results[0].Type;
-    if (!type.includes("'administrador'") || !type.includes("'mesero'") || !type.includes("'cocina'") || !type.includes("'cobrador'")) {
-      const alterRoleEnum = `ALTER TABLE users MODIFY COLUMN role ENUM('administrador', 'mesero', 'cocina', 'cobrador') NOT NULL;`;
+    if (!type.includes("'super_admin'") || !type.includes("'administrador'") || !type.includes("'mesero'") || !type.includes("'cocina'") || !type.includes("'cobrador'")) {
+      const alterRoleEnum = `ALTER TABLE users MODIFY COLUMN role ENUM('super_admin', 'administrador', 'mesero', 'cocina', 'cobrador') NOT NULL;`;
       db.query(alterRoleEnum, (err2) => {
         if (err2) {
           console.error("Error al actualizar el tipo ENUM de 'role' en la tabla 'users':", err2);
@@ -291,7 +291,7 @@ api.post('/register', (req, res) => {
   }
 
   // Validar que el rol sea uno de los permitidos
-  const allowedRoles = ['administrador', 'mesero', 'cocina', 'cobrador'];
+  const allowedRoles = ['super_admin', 'administrador', 'mesero', 'cocina', 'cobrador'];
   if (!allowedRoles.includes(role)) {
     console.log('Rol inválido:', role);
     return res.status(400).json({ error: `Rol inválido. Debe ser uno de: ${allowedRoles.join(', ')}` });

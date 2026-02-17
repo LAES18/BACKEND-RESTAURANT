@@ -2,6 +2,36 @@
 
 Todos los cambios notables de este proyecto serán documentados en este archivo.
 
+## [2.0.0] - 2026-02-17
+
+### ✨ Sistema de Roles Jerárquico
+
+- **Nuevo rol: Super Administrador (`super_admin`)**
+  - Acceso completo a todas las funcionalidades del sistema
+  - Único rol con permisos para agregar y eliminar usuarios
+  - Puede crear otros super_admin
+
+- **Rol Administrador actualizado**
+  - Puede ver y editar usuarios existentes
+  - NO puede agregar nuevos usuarios
+  - NO puede eliminar usuarios
+  - Mantiene acceso completo a platillos, órdenes y reportes
+
+### 🔧 Cambios Técnicos
+
+- Actualizado ENUM de la tabla `users` para incluir 'super_admin'
+- Actualizada validación de roles en el endpoint de registro
+- Actualizado array de roles permitidos en validaciones
+- Migración automática de esquema de base de datos
+
+### 📝 Documentación
+
+- Creado archivo `ROLE_SYSTEM.md` con documentación completa del sistema de permisos
+- Detallado permisos de cada rol
+- Incluye ejemplos de queries SQL para gestión de roles
+
+---
+
 ## [1.0.0] - 2025-10-23
 
 ### ✨ Características Principales
