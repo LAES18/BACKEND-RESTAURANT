@@ -11,7 +11,7 @@ const bcrypt = require('bcrypt');
 const app = express();
 const port = process.env.PORT || 3001;
 
-// CORS config - Railway + Servidor Local + Cloudflare Tunnel
+// CORS config - Railway + Servidor Local + Cloudflare Tunnel (Updated 2026-02-17)
 const allowedOrigins = [
   'https://frontend-restaurant-production.up.railway.app', // correct domain (https)
   'http://frontend-restaurant-production.up.railway.app', // correct domain (http)
