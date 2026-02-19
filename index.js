@@ -176,7 +176,8 @@ const alterQueries = [
   `ALTER TABLE users ADD COLUMN last_name VARCHAR(100)`,
   `ALTER TABLE payments ADD COLUMN method VARCHAR(50)`,
   `ALTER TABLE dishes MODIFY COLUMN type ENUM('desayuno', 'almuerzo', 'cena', 'bebida', 'postre', 'principal') NOT NULL DEFAULT 'principal'`,
-  `ALTER TABLE order_items ADD COLUMN status VARCHAR(20) DEFAULT 'pendiente'`
+  `ALTER TABLE order_items ADD COLUMN status VARCHAR(20) DEFAULT 'pendiente'`,
+  `ALTER TABLE payments ADD COLUMN card_reference VARCHAR(100)`
 ];
 
 // Ejecutar migraciones secuencialmente para evitar deadlocks
@@ -1198,11 +1199,16 @@ api.post('/payments', (req, res) => {
       console.error('Datos de pago inválidos:', payment); // Debugging log
       return res.status(400).send('Datos de pago inválidos');
     }
+    // Validar referencia si el método es tarjeta
+    if (payment.method === 'tarjeta' && !payment.card_reference) {
+      console.error('Referencia de tarjeta requerida:', payment);
+      return res.status(400).send('La referencia de tarjeta es requerida');
+    }
   }
 
   const paymentQueries = payments.map(payment => {
     return new Promise((resolve, reject) => {
-      const { order_id, total, method } = payment;
+      const { order_id, total, method, card_reference } = payment;
       console.log('Processing Payment:', payment); // Debugging log
       
       // VALIDACIÓN DE TOTAL: Calcular el total en el backend
@@ -1236,7 +1242,8 @@ api.post('/payments', (req, res) => {
         }
         
         // Si el total es correcto, proceder con el pago
-        db.query('INSERT INTO payments (order_id, total, method) VALUES (?, ?, ?)', [order_id, calculatedTotal, method], (err) => {
+        db.query('INSERT INTO payments (order_id, total, method, card_reference) VALUES (?, ?, ?, ?)', 
+          [order_id, calculatedTotal, method, card_reference || null], (err) => {
           if (err) {
             console.error('Error al insertar pago:', err, 'Payment Data:', payment); // Debugging log
             reject(err);
@@ -1247,7 +1254,7 @@ api.post('/payments', (req, res) => {
                 console.error('Error al actualizar estado de orden:', err2, 'Order ID:', order_id); // Debugging log
                 reject(err2);
               } else {
-                console.log('✅ Pago validado y procesado:', { order_id, total: calculatedTotal });
+                console.log('✅ Pago validado y procesado:', { order_id, total: calculatedTotal, method, card_reference });
                 resolve();
               }
             });
