@@ -22,7 +22,9 @@ const allowedOrigins = [
   'http://192.168.0.12',     // Servidor local IP
   'http://192.168.0.12:3000', // Servidor local con puerto
   'http://192.168.0.12:80',   // Nginx puerto 80
-  'https://restaurante.lesterex.cloud' // Cloudflare Tunnel domain
+  'https://restaurante.lesterex.cloud', // Cloudflare Tunnel domain
+  'https://churros.synervax.me',  // VPS production (https)
+  'http://churros.synervax.me'    // VPS production (http)
 ];
 
 app.use(cors({
@@ -932,7 +934,15 @@ api.get('/orders/:id', (req, res) => {
 
 // Endpoint to fetch all users
 api.get('/users', (req, res) => {
-  const query = 'SELECT id, name, email, role FROM users';
+  const requestingUserRole = req.query.requestingUserRole || req.headers['x-user-role'];
+  
+  let query = 'SELECT id, name, email, role FROM users';
+  
+  // Si el usuario consultante es administrador, filtrar super_admin
+  if (requestingUserRole === 'administrador') {
+    query += " WHERE role != 'super_admin'";
+  }
+  
   db.query(query, (err, results) => {
     if (err) {
       console.error('Error fetching users:', err);
@@ -1276,23 +1286,73 @@ api.post('/payments', (req, res) => {
 api.put('/users/:id', (req, res) => {
   const { name, email, password, role } = req.body;
   const userId = req.params.id;
+  const requestingUserRole = req.query.requestingUserRole || req.headers['x-user-role'];
 
   // Validar que los campos obligatorios estén presentes (excepto password)
   if (!name || !email || !role) {
     return res.status(400).send('Nombre, email y rol son obligatorios');
   }
-
-  // Si no se envía contraseña o es 'unchanged', no la actualizamos
-  if (password && password !== 'unchanged' && password.trim() !== '') {
-    // Hashear la nueva contraseña antes de actualizar
-    bcrypt.hash(password, 10, (hashErr, hashedPassword) => {
-      if (hashErr) {
-        console.error('Error al hashear contraseña:', hashErr);
-        return res.status(500).send('Error al procesar la contraseña');
+  
+  // Si el usuario consultante es administrador, NO puede cambiar roles
+  if (requestingUserRole === 'administrador') {
+    // Verificar si está intentando cambiar el rol
+    const checkQuery = 'SELECT role FROM users WHERE id = ?';
+    db.query(checkQuery, [userId], (checkErr, checkResults) => {
+      if (checkErr) {
+        console.error('Error al verificar usuario:', checkErr);
+        return res.status(500).send('Error en el servidor');
       }
+      
+      if (checkResults.length === 0) {
+        return res.status(404).send('Usuario no encontrado');
+      }
+      
+      const currentRole = checkResults[0].role;
+      
+      // Si intenta cambiar el rol, denegar
+      if (currentRole !== role) {
+        return res.status(403).json({ 
+          error: 'No tienes permisos para cambiar roles de usuario',
+          message: 'Solo los super administradores pueden cambiar roles'
+        });
+      }
+      
+      // Si no está cambiando el rol, continuar con la actualización normal
+      updateUser();
+    });
+    return;
+  }
+  
+  // Función auxiliar para actualizar usuario
+  function updateUser() {
 
-      const query = 'UPDATE users SET name = ?, email = ?, password = ?, role = ? WHERE id = ?';
-      const params = [name, email, hashedPassword, role, userId];
+    // Si no se envía contraseña o es 'unchanged', no la actualizamos
+    if (password && password !== 'unchanged' && password.trim() !== '') {
+      // Hashear la nueva contraseña antes de actualizar
+      bcrypt.hash(password, 10, (hashErr, hashedPassword) => {
+        if (hashErr) {
+          console.error('Error al hashear contraseña:', hashErr);
+          return res.status(500).send('Error al procesar la contraseña');
+        }
+
+        const query = 'UPDATE users SET name = ?, email = ?, password = ?, role = ? WHERE id = ?';
+        const params = [name, email, hashedPassword, role, userId];
+
+        db.query(query, params, (err, result) => {
+          if (err) {
+            console.error('Error al actualizar usuario:', err);
+            return res.status(500).send('Error al actualizar usuario');
+          } else if (result.affectedRows === 0) {
+            return res.status(404).send('Usuario no encontrado');
+          } else {
+            return res.status(200).send('Usuario actualizado exitosamente');
+          }
+        });
+      });
+    } else {
+      // Si no se cambia la contraseña, solo actualizar otros campos
+      const query = 'UPDATE users SET name = ?, email = ?, role = ? WHERE id = ?';
+      const params = [name, email, role, userId];
 
       db.query(query, params, (err, result) => {
         if (err) {
@@ -1304,23 +1364,11 @@ api.put('/users/:id', (req, res) => {
           return res.status(200).send('Usuario actualizado exitosamente');
         }
       });
-    });
-  } else {
-    // Si no se cambia la contraseña, solo actualizar otros campos
-    const query = 'UPDATE users SET name = ?, email = ?, role = ? WHERE id = ?';
-    const params = [name, email, role, userId];
-
-    db.query(query, params, (err, result) => {
-      if (err) {
-        console.error('Error al actualizar usuario:', err);
-        return res.status(500).send('Error al actualizar usuario');
-      } else if (result.affectedRows === 0) {
-        return res.status(404).send('Usuario no encontrado');
-      } else {
-        return res.status(200).send('Usuario actualizado exitosamente');
-      }
-    });
+    }
   }
+  
+  // Si no es administrador (es super_admin u otro rol), puede actualizar libremente
+  updateUser();
 });
 
 // Ruta para cerrar sesión (logout)
